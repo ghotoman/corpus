@@ -74,6 +74,20 @@ export class ShelbyStorageClient implements StorageClient {
     return this.signer.accountAddress.toString();
   }
 
+  /**
+   * Fund an account with ShelbyUSD from the shelbynet faucet (storage payment
+   * currency). Concrete-only helper used by the seed script — NOT part of the
+   * StorageClient interface. Defaults to the operator's own address.
+   */
+  async fundShelbyUSD(amount: number, address: string = this.account): Promise<string> {
+    return this.client.fundAccountWithShelbyUSD({ address, amount });
+  }
+
+  /** Fund an account with APT (gas) from the faucet. Concrete-only helper. */
+  async fundAPT(amount: number, address: string = this.account): Promise<string> {
+    return this.client.fundAccountWithAPT({ address, amount });
+  }
+
   async upload(params: UploadParams): Promise<StorageHandle> {
     const expiresAt =
       params.expiresAt ?? new Date(Date.now() + this.defaultTtlMs);
