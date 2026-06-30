@@ -1,0 +1,15 @@
+[package]
+name = "corpus"
+version = "0.1.0"
+authors = ["Corpus"]
+
+[addresses]
+# Overridden at publish time, e.g.:
+#   aptos move publish --named-addresses corpus=<your-account-addr>
+# Defaults to _ so the package won't accidentally publish to a hardcoded addr.
+corpus = "_"
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "mainnet"
+subdir = "aptos-framework"
