@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node (typecheck · tests · web build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build storage package
+        # api / web / scripts type-resolve @corpus/storage from its dist output.
+        run: npm run build:storage
+
+      - name: Typecheck (storage + api + web + scripts)
+        run: npm run typecheck
+
+      - name: Test — storage adapter
+        run: npm test -w @corpus/storage
+
+      - name: Test — backend auth gate
+        run: npm test -w @corpus/api
+
+      - name: Build web
+        run: npm run build -w apps-web
+
+  move:
+    name: Move (compile · unit tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Aptos CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          url=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/aptos-labs/aptos-core/releases?per_page=50" \
+            | jq -r '[.[]
+                | select(.tag_name | test("aptos-cli"))
+                | .assets[]
+                | select(.name | test("Linux-x86_64\\.zip$"))
+                | .browser_download_url][0]')
+          echo "Downloading Aptos CLI from: $url"
+          curl -fsSL -o aptos-cli.zip "$url"
+          mkdir -p "$HOME/.local/bin"
+          unzip -o -q aptos-cli.zip -d "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/aptos"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Aptos version
+        run: aptos --version
+
+      - name: Move unit tests
+        working-directory: move
+        # Named address is only needed to resolve the package for tests; the
+        # value is arbitrary and not published.
+        run: aptos move test --named-addresses corpus=0xCAFE
