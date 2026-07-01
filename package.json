@@ -1,0 +1,27 @@
+{
+  "name": "corpus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Corpus — a marketplace for AI datasets stored on Shelby, gated on Aptos/Move.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build:storage": "npm run build -w @corpus/storage",
+    "build": "npm run build:storage",
+    "typecheck": "npm run typecheck -w @corpus/storage && npm run typecheck -w @corpus/api && npm run typecheck -w apps-web && tsc -p scripts/tsconfig.json",
+    "move:test": "cd move && aptos move test --named-addresses corpus=0xCAFE",
+    "test": "npm run test -w @corpus/storage",
+    "api": "npm run dev -w @corpus/api",
+    "web": "npm run dev -w apps/web",
+    "seed": "tsx scripts/seed.ts",
+    "deploy:move": "tsx scripts/deploy_move.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
