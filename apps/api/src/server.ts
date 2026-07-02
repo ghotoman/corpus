@@ -94,6 +94,9 @@ app.post("/api/datasets/:id/download", async (req, res) => {
       .status(400)
       .json({ error: "address, publicKey, nonce, signature required" });
   }
+  if (proof.scheme && proof.scheme !== "raw" && proof.scheme !== "aip62") {
+    return res.status(400).json({ error: "unknown proof scheme" });
+  }
 
   // Verify the requester controls the claimed buyer address.
   let buyer: string;

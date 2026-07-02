@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Account } from "@aptos-labs/ts-sdk";
-import { ChallengeStore, challengeMessage, type Proof } from "../src/auth.js";
+import {
+  CHALLENGE_STATEMENT,
+  ChallengeStore,
+  challengeMessage,
+  type Proof,
+} from "../src/auth.js";
 
 function proofFor(store: ChallengeStore, account: Account): Proof {
   const address = account.accountAddress.toString();
@@ -59,6 +64,118 @@ test("a tampered signature is rejected", () => {
     signature: proof.signature.slice(0, -1) + (proof.signature.endsWith("0") ? "1" : "0"),
   };
   assert.throws(() => store.verify(tampered)); // bad signature or encoding
+});
+
+// ---- AIP-62 (wallet signMessage) scheme ----
+
+/** Build a fullMessage the way an AIP-62 wallet would. */
+function walletFullMessage(address: string, statement: string, nonce: string): string {
+  return `APTOS\naddress: ${address}\nmessage: ${statement}\nnonce: ${nonce}`;
+}
+
+function aip62ProofFor(store: ChallengeStore, account: Account): Proof {
+  const address = account.accountAddress.toString();
+  const { nonce } = store.issue(address);
+  const fullMessage = walletFullMessage(address, CHALLENGE_STATEMENT, nonce);
+  const signature = account.sign(new TextEncoder().encode(fullMessage));
+  return {
+    address,
+    publicKey: account.publicKey.toString(),
+    nonce,
+    signature: signature.toString(),
+    scheme: "aip62",
+    fullMessage,
+  };
+}
+
+test("aip62: valid wallet-style proof is accepted", () => {
+  const store = new ChallengeStore();
+  const account = Account.generate();
+  const verified = store.verify(aip62ProofFor(store, account));
+  assert.equal(verified, account.accountAddress.toStringLong());
+});
+
+test("aip62: fullMessage with a different nonce is rejected", () => {
+  const store = new ChallengeStore();
+  const account = Account.generate();
+  const address = account.accountAddress.toString();
+  const { nonce } = store.issue(address);
+  const forged = walletFullMessage(address, CHALLENGE_STATEMENT, "0xother");
+  const signature = account.sign(new TextEncoder().encode(forged));
+  assert.throws(
+    () =>
+      store.verify({
+        address,
+        publicKey: account.publicKey.toString(),
+        nonce,
+        signature: signature.toString(),
+        scheme: "aip62",
+        fullMessage: forged,
+      }),
+    /nonce mismatch/,
+  );
+});
+
+test("aip62: fullMessage without our statement is rejected", () => {
+  const store = new ChallengeStore();
+  const account = Account.generate();
+  const address = account.accountAddress.toString();
+  const { nonce } = store.issue(address);
+  const forged = walletFullMessage(address, "Approve unrelated dapp action", nonce);
+  const signature = account.sign(new TextEncoder().encode(forged));
+  assert.throws(
+    () =>
+      store.verify({
+        address,
+        publicKey: account.publicKey.toString(),
+        nonce,
+        signature: signature.toString(),
+        scheme: "aip62",
+        fullMessage: forged,
+      }),
+    /challenge statement/,
+  );
+});
+
+test("aip62: signature over a different fullMessage is rejected", () => {
+  const store = new ChallengeStore();
+  const account = Account.generate();
+  const address = account.accountAddress.toString();
+  const { nonce } = store.issue(address);
+  const genuine = walletFullMessage(address, CHALLENGE_STATEMENT, nonce);
+  // Signature made over some other bytes entirely.
+  const signature = account.sign(new TextEncoder().encode("something else"));
+  assert.throws(
+    () =>
+      store.verify({
+        address,
+        publicKey: account.publicKey.toString(),
+        nonce,
+        signature: signature.toString(),
+        scheme: "aip62",
+        fullMessage: genuine,
+      }),
+    /bad signature/,
+  );
+});
+
+test("aip62: missing fullMessage is rejected", () => {
+  const store = new ChallengeStore();
+  const account = Account.generate();
+  const address = account.accountAddress.toString();
+  const { nonce } = store.issue(address);
+  const signature = account.sign(challengeMessage(nonce));
+  assert.throws(
+    () =>
+      store.verify({
+        address,
+        publicKey: account.publicKey.toString(),
+        nonce,
+        signature: signature.toString(),
+        scheme: "aip62",
+      }),
+    /fullMessage required/,
+  );
 });
 
 test("unknown nonce is rejected", () => {

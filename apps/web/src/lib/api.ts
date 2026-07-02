@@ -1,17 +1,12 @@
 /**
  * Backend client for the gated download. The browser never sees Shelby
- * credentials: it proves control of the buyer address by signing a single-use
- * challenge, and the backend (which holds the Shelby key) streams the bytes
- * back only after verifying that proof + the on-chain entitlement.
+ * credentials: the active signer (dev keypair or wallet) proves control of the
+ * buyer address by signing a single-use challenge, and the backend (which
+ * holds the Shelby key) streams the bytes back only after verifying that
+ * proof + the on-chain entitlement.
  */
-import type { Account } from "@aptos-labs/ts-sdk";
 import { API_BASE } from "../config";
-
-function challengeMessage(nonce: string): Uint8Array {
-  return new TextEncoder().encode(
-    `Corpus download authorization\nnonce: ${nonce}`,
-  );
-}
+import type { CorpusSigner } from "./signer";
 
 async function errorText(res: Response): Promise<string> {
   try {
@@ -28,33 +23,26 @@ export interface DownloadedFile {
 }
 
 export async function downloadDataset(
-  account: Account,
+  signer: CorpusSigner,
   datasetId: number,
 ): Promise<DownloadedFile> {
-  const address = account.accountAddress.toString();
-
   // 1. Ask for a single-use challenge bound to this address.
   const challengeRes = await fetch(`${API_BASE}/api/auth/challenge`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address }),
+    body: JSON.stringify({ address: signer.address }),
   });
   if (!challengeRes.ok) throw new Error(await errorText(challengeRes));
   const { nonce } = (await challengeRes.json()) as { nonce: string };
 
-  // 2. Sign it locally with the dev key.
-  const signature = account.sign(challengeMessage(nonce));
+  // 2. Sign it (raw bytes for the dev key, AIP-62 envelope for wallets).
+  const proof = await signer.proveControl(nonce);
 
   // 3. Submit the proof; backend verifies + entitlement-gates, then streams.
   const res = await fetch(`${API_BASE}/api/datasets/${datasetId}/download`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      address,
-      publicKey: account.publicKey.toString(),
-      nonce,
-      signature: signature.toString(),
-    }),
+    body: JSON.stringify(proof),
   });
   if (!res.ok) throw new Error(await errorText(res));
 

@@ -16,3 +16,9 @@ export const API_BASE =
   (import.meta.env.VITE_API_BASE as string) ?? "http://localhost:8787";
 export const MODULE_ADDRESS =
   (import.meta.env.VITE_CORPUS_MODULE_ADDRESS as string) ?? "";
+
+/**
+ * Feature flag: show the real wallet (adapter) UI. Off by default because
+ * browser wallets don't support shelbynet; enable on testnet/mainnet.
+ */
+export const WALLET_ENABLED = import.meta.env.VITE_ENABLE_WALLET === "true";

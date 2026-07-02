@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Ed25519Account } from "@aptos-labs/ts-sdk";
-import { MODULE_ADDRESS, NETWORK } from "./config";
+import { useWallet } from "@aptos-labs/wallet-adapter-react";
+import { MODULE_ADDRESS, NETWORK, WALLET_ENABLED } from "./config";
 import { downloadDataset, saveBlob } from "./lib/api";
 import {
   aptBalance,
@@ -8,9 +9,9 @@ import {
   isEntitled,
   listDatasets,
   makeAptos,
-  purchase,
   type Dataset,
 } from "./lib/chain";
+import { makeDevSigner, makeWalletSigner } from "./lib/signer";
 import { loadOrCreateAccount, resetAccount } from "./lib/wallet";
 
 const OCTAS = 100_000_000;
@@ -20,10 +21,21 @@ const short = (addr: string) =>
 
 export function App() {
   const aptos = useMemo(() => makeAptos(), []);
-  const [account, setAccount] = useState<Ed25519Account>(() =>
+  const wallet = useWallet();
+  const [devAccount, setDevAccount] = useState<Ed25519Account>(() =>
     loadOrCreateAccount(),
   );
-  const address = account.accountAddress.toString();
+
+  // The active signer: a connected wallet (when the flag is on) wins,
+  // otherwise the dev keypair. All purchases/downloads go through it.
+  const signer = useMemo(() => {
+    if (WALLET_ENABLED) {
+      const walletSigner = makeWalletSigner(wallet, aptos);
+      if (walletSigner) return walletSigner;
+    }
+    return makeDevSigner(devAccount, aptos);
+  }, [wallet, devAccount, aptos]);
+  const address = signer.address;
 
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [owned, setOwned] = useState<Record<number, boolean>>({});
@@ -77,22 +89,27 @@ export function App() {
 
   const onPurchase = (d: Dataset) =>
     run(`buy-${d.id}`, async () => {
-      const hash = await purchase(aptos, account, d.id);
+      const hash = await signer.purchase(d.id);
       setStatus(`Purchased "${d.title}" (tx ${short(hash)}).`);
       await refresh();
     });
 
   const onDownload = (d: Dataset) =>
     run(`dl-${d.id}`, async () => {
-      const file = await downloadDataset(account, d.id);
+      const file = await downloadDataset(signer, d.id);
       saveBlob(file);
       setStatus(`Downloaded ${file.filename}.`);
     });
 
   const onNewAccount = () => {
-    setAccount(resetAccount());
+    setDevAccount(resetAccount());
     setStatus("Generated a fresh dev account.");
   };
+
+  const onConnect = (walletName: string) =>
+    run("connect", async () => {
+      wallet.connect(walletName);
+    });
 
   return (
     <div className="page">
@@ -104,32 +121,79 @@ export function App() {
         </p>
       </header>
 
+      {WALLET_ENABLED && (
+        <section className="wallet card">
+          <div className="wallet-row">
+            <div>
+              <div className="label">Wallet</div>
+              {wallet.connected && wallet.account ? (
+                <code title={wallet.account.address.toString()}>
+                  {wallet.wallet?.name}: {short(wallet.account.address.toString())}
+                </code>
+              ) : (
+                <span className="muted">not connected</span>
+              )}
+            </div>
+            <div className="wallet-actions">
+              {wallet.connected ? (
+                <button className="ghost" onClick={() => wallet.disconnect()}>
+                  Disconnect
+                </button>
+              ) : (
+                wallet.wallets.map((w) => (
+                  <button
+                    key={w.name}
+                    onClick={() => onConnect(w.name)}
+                    disabled={busy === "connect"}
+                  >
+                    Connect {w.name}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+          <p className="warn">
+            Wallet mode: your wallet must be on the {NETWORK} network. Only
+            Ed25519 wallet accounts can pass the download gate (keyless /
+            multi-key accounts are denied).
+          </p>
+        </section>
+      )}
+
       <section className="wallet card">
         <div className="wallet-row">
           <div>
-            <div className="label">Dev account ({NETWORK})</div>
+            <div className="label">
+              {signer.kind === "wallet"
+                ? `Active signer: wallet (${NETWORK})`
+                : `Dev account (${NETWORK})`}
+            </div>
             <code title={address}>{short(address)}</code>
           </div>
           <div>
             <div className="label">Balance</div>
-            <code>{(Number(balance) / OCTAS).toFixed(4)} APT</code>
+            <code>{(balance / OCTAS).toFixed(4)} APT</code>
           </div>
           <div className="wallet-actions">
             <button onClick={onFund} disabled={busy === "fund"}>
               {busy === "fund" ? "Funding…" : "Fund (faucet)"}
             </button>
-            <button className="ghost" onClick={onNewAccount}>
-              New account
-            </button>
+            {signer.kind === "dev" && (
+              <button className="ghost" onClick={onNewAccount}>
+                New account
+              </button>
+            )}
             <button className="ghost" onClick={() => void refresh()}>
               Refresh
             </button>
           </div>
         </div>
-        <p className="warn">
-          Dev keypair stored in your browser (localStorage). For demo use only —
-          not a real wallet.
-        </p>
+        {signer.kind === "dev" && (
+          <p className="warn">
+            Dev keypair stored in your browser (localStorage). For demo use only
+            — not a real wallet.
+          </p>
+        )}
       </section>
 
       {status && <div className="banner ok">{status}</div>}

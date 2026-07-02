@@ -39,13 +39,41 @@ export interface Proof {
   publicKey: string;
   nonce: string;
   signature: string;
+  /**
+   * How the challenge was signed:
+   *  - "raw" (default): signature over `challengeMessage(nonce)` bytes — the
+   *    dev-keypair signer path.
+   *  - "aip62": signature over the wallet-built `fullMessage` (AIP-62
+   *    `signMessage`), e.g. "APTOS\n...message: <statement>\nnonce: <nonce>".
+   *    Requires `fullMessage`.
+   */
+  scheme?: "raw" | "aip62";
+  fullMessage?: string;
 }
 
-/** The exact bytes the client must sign for a given nonce. */
+/** Human-readable statement shown by wallets; shared with the frontend. */
+export const CHALLENGE_STATEMENT = "Corpus download authorization";
+
+/** The exact bytes the dev-keypair client signs for a given nonce. */
 export function challengeMessage(nonce: string): Uint8Array {
-  return new TextEncoder().encode(
-    `Corpus download authorization\nnonce: ${nonce}`,
-  );
+  return new TextEncoder().encode(`${CHALLENGE_STATEMENT}\nnonce: ${nonce}`);
+}
+
+/**
+ * Validate an AIP-62 `fullMessage` and return its bytes for verification.
+ * The wallet — not us — assembles this string, so we must check it actually
+ * binds to OUR challenge: correct prefix, our statement, and our nonce.
+ * Throws AuthError on any mismatch (fail closed).
+ */
+function aip62MessageBytes(fullMessage: string, nonce: string): Uint8Array {
+  const lines = fullMessage.split("\n");
+  if (lines[0] !== "APTOS")
+    throw new AuthError("fullMessage missing APTOS prefix", 401);
+  if (!lines.includes(`message: ${CHALLENGE_STATEMENT}`))
+    throw new AuthError("fullMessage does not contain the challenge statement", 401);
+  if (!lines.includes(`nonce: ${nonce}`))
+    throw new AuthError("fullMessage nonce mismatch", 401);
+  return new TextEncoder().encode(fullMessage);
 }
 
 export class ChallengeStore {
@@ -82,14 +110,27 @@ export class ChallengeStore {
     if (claimed !== challenge.address)
       throw new AuthError("challenge/address mismatch", 401);
 
+    // Resolve which bytes were signed. For the wallet (AIP-62) path the wallet
+    // builds the message, so validate it binds to our challenge first.
+    let message: Uint8Array;
+    if (proof.scheme === "aip62") {
+      if (!proof.fullMessage)
+        throw new AuthError("fullMessage required for aip62 proofs", 400);
+      message = aip62MessageBytes(proof.fullMessage, proof.nonce);
+    } else {
+      message = challengeMessage(proof.nonce);
+    }
+
     // The public key must hash to the claimed address.
+    // NOTE: only legacy Ed25519 accounts are supported; keyless / multi-key
+    // wallet accounts will fail this derivation and be denied (fail closed).
     let derived: string;
     let valid: boolean;
     try {
       const pk = new Ed25519PublicKey(proof.publicKey);
       derived = pk.authKey().derivedAddress().toStringLong();
       valid = pk.verifySignature({
-        message: challengeMessage(proof.nonce),
+        message,
         signature: new Ed25519Signature(proof.signature),
       });
     } catch (err) {
