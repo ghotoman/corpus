@@ -160,12 +160,33 @@ All config is in `.env` (see `.env.example`). Server-only secrets:
 
 ---
 
-## Limitations / TODO (v1 scope)
+## Wallet mode (behind a flag)
 
-- **Dev keypair signer**, not a real wallet. shelbynet is a custom isolated
-  network that browser wallets (Petra, etc.) don't support out of the box.
-  _TODO(mainnet):_ wire `@aptos-labs/wallet-adapter-react` and keep the dev
-  signer behind a flag.
+The default signer is a **dev keypair** in localStorage, because browser
+wallets (Petra, etc.) don't support the custom, isolated shelbynet. A real
+wallet path via `@aptos-labs/wallet-adapter-react` ships behind a flag for
+testnet/mainnet use:
+
+```bash
+VITE_ENABLE_WALLET=true   # in .env — shows the wallet connect UI
+```
+
+When a wallet is connected it becomes the active signer: purchases go through
+the wallet's `signAndSubmitTransaction`, and the download proof uses AIP-62
+`signMessage` — the backend verifies the wallet-built `fullMessage` envelope
+(prefix, statement, and nonce must all bind to the issued challenge) under the
+`aip62` proof scheme. Without a connected wallet the app falls back to the dev
+signer.
+
+Wallet-mode caveats (enforced fail-closed by the backend):
+
+- Only **legacy Ed25519** wallet accounts can pass the download gate — the
+  backend derives the address from the Ed25519 public key, so keyless /
+  multi-key accounts are denied.
+- Your wallet must be on the same network the app targets; on shelbynet keep
+  the flag off and use the dev signer.
+
+## Limitations / TODO (v1 scope)
 - **Payment in APT** only. The Move payment path is isolated in `charge_buyer()`
   so the asset can be swapped. _TODO:_ parameterize the coin / fungible asset.
 - **API key for reads** is wired as an optional env var; whether shelbynet
